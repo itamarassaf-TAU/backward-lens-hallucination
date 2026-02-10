@@ -40,6 +40,7 @@ class HallucinationDetector:
         return parser.parse_args()
 
     def _load_model(self):
+        # Lazily load model + tokenizer + Backward Lens helpers once.
         if self._model is not None:
             return self._model, self._tokenizer, self._model_aux, self._device
 
@@ -48,6 +49,7 @@ class HallucinationDetector:
             "cuda" if torch.cuda.is_available() else "cpu"
         )
 
+        # Load tokenizer and model for the selected LLM.
         self.log.info(f"Loading tokenizer/model for [bold]{args.model_name}[/bold]...")
         tokenizer = AutoTokenizer.from_pretrained(args.model_name)
         if tokenizer.pad_token is None:
@@ -58,6 +60,7 @@ class HallucinationDetector:
         except Exception:
             pass
 
+        # Load model and wrap with Backward Lens utilities.
         model = AutoModelForCausalLM.from_pretrained(args.model_name).eval().requires_grad_(False).to(device)
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             model_aux = llm_utils.model_extra(model=model, device=device)
@@ -69,6 +72,7 @@ class HallucinationDetector:
         return model, tokenizer, model_aux, device
 
     def run_backward_lens(self, prompt: str, target_new: str = " Paris"):
+        # Run Backward Lens once to collect hidden states and VJPs.
         args = self.args
         model, tokenizer, model_aux, device = self._load_model()
         config = model_aux.config
@@ -85,6 +89,7 @@ class HallucinationDetector:
 
         self.console.print(Panel.fit("Extracting Backward Lens (hidden states + VJPs)...", style="bold yellow"))
 
+        # Suppress verbose internal prints from Backward Lens.
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             res = opt_utils.get_nll_opt_model(
                 prompt,
@@ -120,7 +125,8 @@ class HallucinationDetector:
             "model_aux": model_aux,
         }
 
-    def calculate_hallucination_score(self, prompt: str, target_new: str = " Paris"):
+    def calculate_hallucination_score(self, prompt: str):
+        # Compute KL disagreement across generated tokens until stop criteria.
         args = self.args
         model, tokenizer, model_aux, device = self._load_model()
         lens_layer = model_aux.n_layer // 2
@@ -132,6 +138,7 @@ class HallucinationDetector:
         kl_scores = []
         max_new_tokens = self.args.max_new_tokens
 
+        # Greedy token generation with KL computed at each step.
         for _ in range(max_new_tokens):
             with torch.no_grad():
                 outputs = model(generated_ids, output_hidden_states=True)
@@ -148,6 +155,7 @@ class HallucinationDetector:
             next_token = outputs.logits[0, -1, :].argmax(dim=-1, keepdim=True)
             generated_ids = torch.cat([generated_ids, next_token.unsqueeze(0)], dim=1)
 
+            # Stop on period/newline to keep answers short.
             partial_text = tokenizer.decode(
                 generated_ids[0, prompt_len:], skip_special_tokens=True
             )
@@ -157,6 +165,7 @@ class HallucinationDetector:
         if not kl_scores:
             kl_scores = [0.0]
 
+        # Decode only the generated answer portion (exclude prompt).
         answer_text = tokenizer.decode(generated_ids[0, prompt_len:], skip_special_tokens=True)
         if not answer_text:
             answer_text = "<empty>"

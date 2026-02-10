@@ -13,6 +13,7 @@ class SimilarityDetector:
         device: Optional[str] = None,
         nli_model_name: str = "facebook/bart-large-mnli",
     ):
+        # Sentence-transformer for cosine similarity.
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model = SentenceTransformer(model_name, device=self.device)
         self._nli_model_name = nli_model_name
@@ -20,6 +21,7 @@ class SimilarityDetector:
         self._nli_model = None
 
     def cosine_similarity(self, text_a: str, text_b: str) -> float:
+        # Embedding-based cosine similarity (semantic).
         embeddings = self.model.encode(
             [text_a, text_b],
             convert_to_tensor=True,
@@ -30,6 +32,7 @@ class SimilarityDetector:
         return score
 
     def tfidf_cosine_similarity(self, text_a: str, text_b: str) -> float:
+        # TF-IDF cosine similarity (lexical overlap).
         try:
             from sklearn.feature_extraction.text import TfidfVectorizer
         except ImportError as exc:
@@ -41,6 +44,7 @@ class SimilarityDetector:
         return float(score)
 
     def _load_nli(self):
+        # Lazy-load NLI model.
         if self._nli_model is not None:
             return
 
@@ -49,6 +53,7 @@ class SimilarityDetector:
         self._nli_model.eval()
 
     def _entailment_index(self) -> int:
+        # Find entailment label index for the NLI model.
         label2id = self._nli_model.config.label2id
         for key, idx in label2id.items():
             if key.lower() == "entailment":
@@ -56,6 +61,7 @@ class SimilarityDetector:
         return int(label2id.get("ENTAILMENT", 2))
 
     def nli_entailment_score(self, premise: str, hypothesis: str) -> float:
+        # NLI entailment probability: premise entails hypothesis.
         self._load_nli()
 
         inputs = self._nli_tokenizer(
@@ -74,6 +80,7 @@ class SimilarityDetector:
 
     @staticmethod
     def _min_max_normalize(values):
+        # Normalize a list to [0, 1].
         values = list(values)
         if not values:
             return []
@@ -90,6 +97,7 @@ class SimilarityDetector:
         nli_scores,
         weights=(1.0, 1.0, 1.0),
     ):
+        # Combine normalized metrics with weights, then re-normalize.
         cos_norm = self._min_max_normalize(cos_scores)
         tfidf_norm = self._min_max_normalize(tfidf_scores)
         nli_norm = self._min_max_normalize(nli_scores)
