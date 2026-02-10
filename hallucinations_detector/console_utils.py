@@ -32,8 +32,8 @@ def create_results_table():
     return table
 
 
-def render_corr_table(console, rows):
-    table = Table(title="KL Correlation (Train)", box=box.SIMPLE_HEAVY)
+def render_corr_table(console, rows, title="KL Correlation (Train)"):
+    table = Table(title=title, box=box.SIMPLE_HEAVY)
     table.add_column("Metric", style="cyan")
     table.add_column("Pearson", style="magenta", justify="right")
     table.add_column("Spearman", style="magenta", justify="right")

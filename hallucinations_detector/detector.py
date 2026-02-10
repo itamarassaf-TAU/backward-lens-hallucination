@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
+import numpy as np
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from rich import box
@@ -169,5 +170,14 @@ class HallucinationDetector:
         answer_text = tokenizer.decode(generated_ids[0, prompt_len:], skip_special_tokens=True)
         if not answer_text:
             answer_text = "<empty>"
-        kl_mean = float(sum(kl_scores) / len(kl_scores))
-        return kl_mean, answer_text
+
+        # Summary stats for KL over generated tokens.
+        kl_array = np.array(kl_scores, dtype=np.float32)
+        kl_stats = {
+            "mean": float(kl_array.mean()),
+            "max": float(kl_array.max()),
+            "p90": float(np.percentile(kl_array, 90)),
+            "std": float(kl_array.std()),
+        }
+
+        return kl_stats, answer_text

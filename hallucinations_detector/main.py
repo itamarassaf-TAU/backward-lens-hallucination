@@ -31,6 +31,9 @@ if __name__ == "__main__":
     def collect_scores(dataset, limit_table=False, desc="Processing"):
         # Compute KL + similarity metrics for a dataset split.
         kl_scores = []
+        kl_max_scores = []
+        kl_p90_scores = []
+        kl_std_scores = []
         cos_scores = []
         tfidf_scores = []
         nli_scores = []
@@ -41,7 +44,7 @@ if __name__ == "__main__":
             wrapped_prompt = f'question: {question} answer:'
 
             # KL-based hallucination score + generated answer.
-            score, model_answer = hallucination_detector.calculate_hallucination_score(prompt=wrapped_prompt)
+            kl_stats, model_answer = hallucination_detector.calculate_hallucination_score(prompt=wrapped_prompt)
 
             # Reference answer.
             expected = item.get("best_answer", "")
@@ -51,7 +54,10 @@ if __name__ == "__main__":
             tfidf_sim = similarity_detector.tfidf_cosine_similarity(model_answer, expected)
             nli_score = similarity_detector.nli_entailment_score(expected, model_answer)
 
-            kl_scores.append(score)
+            kl_scores.append(kl_stats["mean"])
+            kl_max_scores.append(kl_stats["max"])
+            kl_p90_scores.append(kl_stats["p90"])
+            kl_std_scores.append(kl_stats["std"])
             cos_scores.append(cos_sim)
             tfidf_scores.append(tfidf_sim)
             nli_scores.append(nli_score)
@@ -63,7 +69,7 @@ if __name__ == "__main__":
                 short_expected = expected if len(expected) <= 80 else expected[:77] + "..."
                 results_table.add_row(
                     str(idx),
-                    f"{score:.4f}",
+                    f"{kl_stats['mean']:.4f}",
                     f"{cos_sim:.4f}",
                     f"{tfidf_sim:.4f}",
                     f"{nli_score:.4f}",
@@ -72,10 +78,10 @@ if __name__ == "__main__":
                     short_expected,
                 )
 
-        return kl_scores, cos_scores, tfidf_scores, nli_scores
+        return kl_scores, kl_max_scores, kl_p90_scores, kl_std_scores, cos_scores, tfidf_scores, nli_scores
 
     # Collect training metrics.
-    train_kl, train_cos, train_tfidf, train_nli = collect_scores(
+    train_kl, train_kl_max, train_kl_p90, train_kl_std, train_cos, train_tfidf, train_nli = collect_scores(
         train_set, limit_table=False, desc="Training"
     )
 
@@ -102,7 +108,32 @@ if __name__ == "__main__":
             p, s = _corr(train_kl, vals)
             corr_rows.append((name, p, s))
 
-        render_corr_table(hallucination_detector.console, corr_rows)
+        render_corr_table(hallucination_detector.console, corr_rows, title="KL vs Similarities (Train)")
+
+        # KL summary stats vs all similarity metrics.
+        kl_stats = [
+            ("KL-mean", train_kl),
+            ("KL-max", train_kl_max),
+            ("KL-p90", train_kl_p90),
+            ("KL-std", train_kl_std),
+        ]
+
+        sim_metrics = [
+            ("CosSim", train_cos),
+            ("TFIDF", train_tfidf),
+            ("NLI", train_nli),
+        ]
+
+        for kl_name, kl_vals in kl_stats:
+            rows = []
+            for sim_name, sim_vals in sim_metrics:
+                p, s = _corr(kl_vals, sim_vals)
+                rows.append((sim_name, p, s))
+            render_corr_table(
+                hallucination_detector.console,
+                rows,
+                title=f"{kl_name} vs Similarities (Train)",
+            )
     except Exception as exc:
         hallucination_detector.console.print(
             f"[yellow]Correlation skipped:[/yellow] {exc}"
@@ -124,7 +155,7 @@ if __name__ == "__main__":
     best = threshold_optimizer.grid_search_kl_threshold(train_filtered_kl, train_labels, metric=optimize_metric)
 
     # Collect validation metrics.
-    val_kl, val_cos, val_tfidf, val_nli = collect_scores(
+    val_kl, val_kl_max, val_kl_p90, val_kl_std, val_cos, val_tfidf, val_nli = collect_scores(
         val_set, limit_table=True, desc="Validation"
     )
 
