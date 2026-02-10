@@ -32,6 +32,19 @@ def create_results_table():
     return table
 
 
+def create_examples_table(title="NN Classification Examples"):
+    table = Table(title=title, box=box.SIMPLE_HEAVY)
+    table.add_column("Type", style="cyan")
+    table.add_column("True", style="magenta", justify="right")
+    table.add_column("Pred", style="magenta", justify="right")
+    table.add_column("NLI", style="cyan", justify="right")
+    table.add_column("Prob", style="cyan", justify="right")
+    table.add_column("Question", style="white")
+    table.add_column("Model Answer", style="green")
+    table.add_column("Expected", style="yellow")
+    return table
+
+
 def render_corr_table(console, rows, title="KL Correlation (Train)"):
     table = Table(title=title, box=box.SIMPLE_HEAVY)
     table.add_column("Metric", style="cyan")
@@ -42,8 +55,8 @@ def render_corr_table(console, rows, title="KL Correlation (Train)"):
     console.print(table)
 
 
-def render_summary_table(console, summary_rows):
-    table = Table(title="Threshold Search Summary", box=box.SIMPLE_HEAVY)
+def render_summary_table(console, summary_rows, title="Summary"):
+    table = Table(title=title, box=box.SIMPLE_HEAVY)
     table.add_column("Metric", style="cyan")
     table.add_column("Value", style="magenta")
     for key, value in summary_rows:

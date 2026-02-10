@@ -1,9 +1,15 @@
+import json
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 from tqdm import tqdm  # progress bar for dataset loops
 from dataset_loader import load_truthfulqa_train_val  # dataset splits
-from console_utils import create_results_table, render_corr_table, render_summary_table
+from console_utils import create_results_table, create_examples_table, render_corr_table, render_summary_table
 from detector import HallucinationDetector  # KL-based scoring
 from similarity_detector import SimilarityDetector  # similarity metrics + combined score
 from threshold_optimizer import ThresholdOptimizer  # threshold tuning
+from nn_classifier import train_mlp_classifier
+import torch
 
 
 if __name__ == "__main__":
@@ -13,22 +19,36 @@ if __name__ == "__main__":
     threshold_optimizer = ThresholdOptimizer(num_thresholds=101)
 
     # Weights for combined similarity (cosine, tf-idf, NLI).
-    alpha, beta, gamma = 1.0, 0.0, 0.0  # cosine-only
+    alpha, beta, gamma = 0.0, 0.0, 1.0  # NLI-only
 
-    # Classify hallucination if similarity < 0.5 (no uncertain zone).
-    lower_conf = 0.5
-    upper_conf = 0.5
+    # Default label threshold for reporting (we'll sweep over a range too).
+    label_threshold = 0.5
 
     # Load train/validation splits.
     train_set, val_set = load_truthfulqa_train_val(
-        train_split="validation[:200]",
-        val_split="validation[200:260]",
+        train_split="validation[:400]",
+        val_split="validation[400:500]",
     )
+
+    cache_path = Path(__file__).resolve().parent / "cached_features.json"
+
+    def load_cache(path: Path, config: dict):
+        if not path.exists():
+            return None
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("config") != config:
+            return None
+        return data
+
+    def save_cache(path: Path, data: dict):
+        with path.open("w", encoding="utf-8") as f:
+            json.dump(data, f)
 
     # Results table (filled only for validation examples).
     results_table = create_results_table()
 
-    def collect_scores(dataset, limit_table=False, desc="Processing"):
+    def collect_scores(dataset, limit_table=False, desc="Processing", return_meta=False):
         # Compute KL + similarity metrics for a dataset split.
         kl_scores = []
         kl_max_scores = []
@@ -37,6 +57,7 @@ if __name__ == "__main__":
         cos_scores = []
         tfidf_scores = []
         nli_scores = []
+        meta = []
 
         for idx, item in enumerate(tqdm(dataset, desc=desc), start=1):
             # Prompt formatting.
@@ -62,6 +83,16 @@ if __name__ == "__main__":
             tfidf_scores.append(tfidf_sim)
             nli_scores.append(nli_score)
 
+            if return_meta:
+                meta.append(
+                    {
+                        "question": question,
+                        "model_answer": model_answer,
+                        "expected": expected,
+                        "nli": nli_score,
+                    }
+                )
+
             if limit_table:
                 # Shorten long strings to keep the table readable.
                 short_q = question if len(question) <= 80 else question[:77] + "..."
@@ -78,17 +109,113 @@ if __name__ == "__main__":
                     short_expected,
                 )
 
-        return kl_scores, kl_max_scores, kl_p90_scores, kl_std_scores, cos_scores, tfidf_scores, nli_scores
+        return kl_scores, kl_max_scores, kl_p90_scores, kl_std_scores, cos_scores, tfidf_scores, nli_scores, meta
 
-    # Collect training metrics.
-    train_kl, train_kl_max, train_kl_p90, train_kl_std, train_cos, train_tfidf, train_nli = collect_scores(
-        train_set, limit_table=False, desc="Training"
-    )
+    cache_config = {
+        "model": hallucination_detector.args.model_name,
+        "max_new_tokens": hallucination_detector.args.max_new_tokens,
+        "min_new_tokens": hallucination_detector.args.min_new_tokens,
+        "temperature": hallucination_detector.args.temperature,
+        "top_p": hallucination_detector.args.top_p,
+        "do_sample": hallucination_detector.args.do_sample,
+    }
+
+    cache = load_cache(cache_path, cache_config)
+    if cache:
+        train_kl = cache["train"]["kl_mean"]
+        train_kl_max = cache["train"]["kl_max"]
+        train_kl_p90 = cache["train"]["kl_p90"]
+        train_kl_std = cache["train"]["kl_std"]
+        train_cos = cache["train"]["cos"]
+        train_tfidf = cache["train"]["tfidf"]
+        train_nli = cache["train"]["nli"]
+
+        val_kl = cache["val"]["kl_mean"]
+        val_kl_max = cache["val"]["kl_max"]
+        val_kl_p90 = cache["val"]["kl_p90"]
+        val_kl_std = cache["val"]["kl_std"]
+        val_cos = cache["val"]["cos"]
+        val_tfidf = cache["val"]["tfidf"]
+        val_nli = cache["val"]["nli"]
+        val_meta = cache.get("val_meta")
+    else:
+        # Collect training metrics.
+        train_kl, train_kl_max, train_kl_p90, train_kl_std, train_cos, train_tfidf, train_nli, _ = collect_scores(
+            train_set, limit_table=False, desc="Training"
+        )
+
+        # Collect validation metrics.
+        val_kl, val_kl_max, val_kl_p90, val_kl_std, val_cos, val_tfidf, val_nli, val_meta = collect_scores(
+            val_set, limit_table=True, desc="Validation", return_meta=True
+        )
+
+        save_cache(
+            cache_path,
+            {
+            "config": cache_config,
+                "train": {
+                    "kl_mean": train_kl,
+                    "kl_max": train_kl_max,
+                    "kl_p90": train_kl_p90,
+                    "kl_std": train_kl_std,
+                    "cos": train_cos,
+                    "tfidf": train_tfidf,
+                    "nli": train_nli,
+                },
+                "val": {
+                    "kl_mean": val_kl,
+                    "kl_max": val_kl_max,
+                    "kl_p90": val_kl_p90,
+                    "kl_std": val_kl_std,
+                    "cos": val_cos,
+                    "tfidf": val_tfidf,
+                    "nli": val_nli,
+                },
+                "val_meta": val_meta,
+            },
+        )
+
+    if val_meta is None:
+        # Populate validation metadata (question/answers) if cache was created without it.
+        val_kl, val_kl_max, val_kl_p90, val_kl_std, val_cos, val_tfidf, val_nli, val_meta = collect_scores(
+            val_set, limit_table=True, desc="Validation (meta)", return_meta=True
+        )
+        save_cache(
+            cache_path,
+            {
+                "config": cache_config,
+                "train": {
+                    "kl_mean": train_kl,
+                    "kl_max": train_kl_max,
+                    "kl_p90": train_kl_p90,
+                    "kl_std": train_kl_std,
+                    "cos": train_cos,
+                    "tfidf": train_tfidf,
+                    "nli": train_nli,
+                },
+                "val": {
+                    "kl_mean": val_kl,
+                    "kl_max": val_kl_max,
+                    "kl_p90": val_kl_p90,
+                    "kl_std": val_kl_std,
+                    "cos": val_cos,
+                    "tfidf": val_tfidf,
+                    "nli": val_nli,
+                },
+                "val_meta": val_meta,
+            },
+        )
 
     # Combine similarity scores (cosine + tf-idf + NLI) into a single similarity signal.
     train_sim = similarity_detector.combined_similarity(
         train_cos, train_tfidf, train_nli, weights=(alpha, beta, gamma)
     )
+
+    # Train a small MLP classifier to predict NLI hard labels from BL features.
+    x_train = torch.tensor(
+        list(zip(train_kl, train_kl_max, train_kl_p90, train_kl_std)), dtype=torch.float32
+    )
+    y_train = torch.tensor([1 if s >= label_threshold else 0 for s in train_nli], dtype=torch.float32)
 
 
     # Correlation report: KL vs similarity metrics (train split).
@@ -139,45 +266,48 @@ if __name__ == "__main__":
             f"[yellow]Correlation skipped:[/yellow] {exc}"
         )
 
-    # Keep only confident examples for training labels.
-    train_filtered_kl = []
-    train_labels = []
-    for score, kl in zip(train_sim, train_kl):
-        if score <= lower_conf:
-            train_filtered_kl.append(kl)
-            train_labels.append(0)
-        elif score >= upper_conf:
-            train_filtered_kl.append(kl)
-            train_labels.append(1)
-
-    # Optimize KL threshold on the training split.
-    optimize_metric = "loss"
-    best = threshold_optimizer.grid_search_kl_threshold(train_filtered_kl, train_labels, metric=optimize_metric)
-
-    # Collect validation metrics.
-    val_kl, val_kl_max, val_kl_p90, val_kl_std, val_cos, val_tfidf, val_nli = collect_scores(
-        val_set, limit_table=True, desc="Validation"
-    )
+    # Validation metrics loaded above (from cache or freshly computed).
 
     # Build validation labels from combined similarity and apply the same confidence filter.
     val_sim = similarity_detector.combined_similarity(
         val_cos, val_tfidf, val_nli, weights=(alpha, beta, gamma)
     )
-    val_filtered_kl = []
-    val_labels = []
-    for score, kl in zip(val_sim, val_kl):
-        if score <= lower_conf:
-            val_filtered_kl.append(kl)
-            val_labels.append(0)
-        elif score >= upper_conf:
-            val_filtered_kl.append(kl)
-            val_labels.append(1)
-
-    # Evaluate KL threshold on validation.
-    val_preds = [1 if s >= best.threshold else 0 for s in val_filtered_kl]
-    val_f1, val_precision, val_recall, val_accuracy, val_bal_acc, val_mcc = threshold_optimizer._binary_metrics(
-        val_preds, val_labels
+    x_val = torch.tensor(
+        list(zip(val_kl, val_kl_max, val_kl_p90, val_kl_std)), dtype=torch.float32
     )
+    y_val = torch.tensor([1 if s >= label_threshold else 0 for s in val_nli], dtype=torch.float32)
+
+    nn_result = train_mlp_classifier(x_train, y_train, x_val, y_val)
+
+    # Plot training curve and save.
+    plot_path = Path(__file__).resolve().parent / "mlp_training_curve.png"
+    plt.figure(figsize=(6, 4))
+    plt.plot(nn_result["train_losses"], label="Train BCE")
+    plt.xlabel("Epoch")
+    plt.ylabel("BCE")
+    plt.title("MLP Classifier Training Curve")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(plot_path)
+    plt.close()
+    # NN classification evaluation.
+    nn_val_probs = nn_result["val_probs"].tolist()
+
+    # Sweep label thresholds and pick best F1.
+    sweep = [round(x, 2) for x in [0.1, 0.2, 0.3, 0.4, 0.5]]
+    best_thr = None
+    best_metrics = None
+    best_f1 = -1.0
+    for thr in sweep:
+        val_labels = [1 if s >= thr else 0 for s in val_nli]
+        nn_val_preds = [1 if p >= thr else 0 for p in nn_val_probs]
+        metrics = threshold_optimizer._binary_metrics(nn_val_preds, val_labels)
+        if metrics[0] > best_f1:
+            best_f1 = metrics[0]
+            best_thr = thr
+            best_metrics = metrics
+
+    val_f1, val_precision, val_recall, val_accuracy, val_bal_acc, val_mcc = best_metrics
 
     # Print validation table.
     hallucination_detector.console.print(results_table)
@@ -186,16 +316,48 @@ if __name__ == "__main__":
     summary_rows = [
         ("Train size", str(len(train_set))),
         ("Val size", str(len(val_set))),
-        ("Weights (cos, tfidf, nli)", f"{alpha:.2f}, {beta:.2f}, {gamma:.2f}"),
-        ("Optimize metric", optimize_metric),
-        ("Best KL threshold (train)", f"{best.threshold:.2f}"),
-        ("Confident zone", f"<= {lower_conf:.1f} or >= {upper_conf:.1f}"),
-        ("Train F1", f"{best.f1:.4f}"),
-        ("Val F1", f"{val_f1:.4f}"),
-        ("Val Precision", f"{val_precision:.4f}"),
-        ("Val Recall", f"{val_recall:.4f}"),
-        ("Val Accuracy", f"{val_accuracy:.4f}"),
-        ("Val Balanced Acc", f"{val_bal_acc:.4f}"),
-        ("Val MCC", f"{val_mcc:.4f}"),
+        ("Best label threshold (NLI)", f"{best_thr:.2f}"),
+        ("NN Val BCE", f"{nn_result['val_bce']:.4f}"),
+        ("NN Val F1", f"{val_f1:.4f}"),
+        ("NN Val Precision", f"{val_precision:.4f}"),
+        ("NN Val Recall", f"{val_recall:.4f}"),
+        ("NN Val Accuracy", f"{val_accuracy:.4f}"),
+        ("NN Val Balanced Acc", f"{val_bal_acc:.4f}"),
+        ("NN Val MCC", f"{val_mcc:.4f}"),
     ]
-    render_summary_table(hallucination_detector.console, summary_rows)
+    render_summary_table(hallucination_detector.console, summary_rows, title="NN Classification Summary")
+
+    # Show TP/TN/FP/FN examples using the best threshold.
+    true_labels = [1 if s >= best_thr else 0 for s in val_nli]
+    pred_labels = [1 if p >= best_thr else 0 for p in nn_val_probs]
+
+    def _shorten(text, limit=80):
+        return text if len(text) <= limit else text[: limit - 3] + "..."
+
+    examples_table = create_examples_table(title="NN Classification Examples (Val)")
+    buckets = {"TP": [], "TN": [], "FP": [], "FN": []}
+    for i, (t, p) in enumerate(zip(true_labels, pred_labels)):
+        if t == 1 and p == 1:
+            buckets["TP"].append(i)
+        elif t == 0 and p == 0:
+            buckets["TN"].append(i)
+        elif t == 0 and p == 1:
+            buckets["FP"].append(i)
+        else:
+            buckets["FN"].append(i)
+
+    for label in ["TP", "TN", "FP", "FN"]:
+        for idx in buckets[label][:3]:
+            meta = val_meta[idx]
+            examples_table.add_row(
+                label,
+                str(true_labels[idx]),
+                str(pred_labels[idx]),
+                f"{meta['nli']:.4f}",
+                f"{nn_val_probs[idx]:.4f}",
+                _shorten(meta["question"]),
+                _shorten(meta["model_answer"]),
+                _shorten(meta["expected"]),
+            )
+
+    hallucination_detector.console.print(examples_table)

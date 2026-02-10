@@ -38,6 +38,10 @@ class HallucinationDetector:
         parser.add_argument("--model_name", type=str, default="gpt2")
         parser.add_argument("--device", type=str, default=None)
         parser.add_argument("--max_new_tokens", type=int, default=30)
+        parser.add_argument("--min_new_tokens", type=int, default=5)
+        parser.add_argument("--temperature", type=float, default=0.8)
+        parser.add_argument("--top_p", type=float, default=0.9)
+        parser.add_argument("--do_sample", action="store_true")
         return parser.parse_args()
 
     def _load_model(self):
@@ -139,8 +143,8 @@ class HallucinationDetector:
         kl_scores = []
         max_new_tokens = self.args.max_new_tokens
 
-        # Greedy token generation with KL computed at each step.
-        for _ in range(max_new_tokens):
+        # Token generation with KL computed at each step.
+        for step in range(max_new_tokens):
             with torch.no_grad():
                 outputs = model(generated_ids, output_hidden_states=True)
 
@@ -153,14 +157,35 @@ class HallucinationDetector:
             kl = F.kl_div(probs_lens.log(), probs_final, reduction="sum").item()
             kl_scores.append(kl)
 
-            next_token = outputs.logits[0, -1, :].argmax(dim=-1, keepdim=True)
+            next_logits = outputs.logits[0, -1, :]
+
+            if args.do_sample:
+                # Apply temperature.
+                if args.temperature > 0:
+                    next_logits = next_logits / args.temperature
+
+                # Top-p (nucleus) filtering.
+                sorted_logits, sorted_indices = torch.sort(next_logits, descending=True)
+                sorted_probs = torch.softmax(sorted_logits, dim=-1)
+                cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+
+                cutoff = cumulative_probs > args.top_p
+                cutoff[..., 0] = False  # keep at least one token
+                sorted_logits[cutoff] = -float("inf")
+                filtered_logits = torch.empty_like(next_logits).scatter_(0, sorted_indices, sorted_logits)
+
+                probs = torch.softmax(filtered_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+            else:
+                next_token = next_logits.argmax(dim=-1, keepdim=True)
+
             generated_ids = torch.cat([generated_ids, next_token.unsqueeze(0)], dim=1)
 
             # Stop on period/newline to keep answers short.
             partial_text = tokenizer.decode(
                 generated_ids[0, prompt_len:], skip_special_tokens=True
             )
-            if partial_text and ("." in partial_text or "\n" in partial_text):
+            if step + 1 >= args.min_new_tokens and partial_text and ("." in partial_text or "\n" in partial_text):
                 break
 
         if not kl_scores:
