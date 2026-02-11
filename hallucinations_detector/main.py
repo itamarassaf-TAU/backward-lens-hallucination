@@ -1,34 +1,95 @@
+import argparse
 import json
 from pathlib import Path
-
+from console_utils import preview_examples
 import matplotlib.pyplot as plt
 from tqdm import tqdm  # progress bar for dataset loops
-from dataset_loader import load_truthfulqa_train_val  # dataset splits
+from dataset_loader import (
+    load_truthfulqa_train_val,
+    load_simplequestions_wikidata_train_val,
+    load_squad_v1_train_val,
+    load_webquestions_train_val,
+)  # dataset splits
 from console_utils import create_results_table, create_examples_table, render_corr_table, render_summary_table
 from detector import HallucinationDetector  # KL-based scoring
 from similarity_detector import SimilarityDetector  # similarity metrics + combined score
 from threshold_optimizer import ThresholdOptimizer  # threshold tuning
 from nn_classifier import train_mlp_classifier
 import torch
+import string
+import re
+
+def normalize_answer(s):
+    def remove_articles(text):
+        return re.sub(r'\b(a|an|the)\b', ' ', text)
+
+    def white_space_fix(text):
+        return ' '.join(text.split())
+
+    def remove_punc(text):
+        exclude = set(string.punctuation)
+        return ''.join(ch for ch in text if ch not in exclude)
+
+    def lower(text):
+        return text.lower()
+
+    return white_space_fix(remove_articles(remove_punc(lower(s))))
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="squad",
+        choices=["truthfulqa", "simplequestions_wikidata", "squad", "web_questions"],
+    )
+    parser.add_argument("--train_split", type=str, default="train[:400]")
+    parser.add_argument("--val_split", type=str, default="validation[:100]")
+    parser.add_argument("--answerable_only", action="store_true")
+    parser.add_argument("--no_resolve_wikidata_labels", action="store_true")
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
+
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    args = parse_args()
     # Initialize core components.
     hallucination_detector = HallucinationDetector()
     similarity_detector = SimilarityDetector()
     threshold_optimizer = ThresholdOptimizer(num_thresholds=101)
 
     # Weights for combined similarity (cosine, tf-idf, NLI).
-    alpha, beta, gamma = 0.0, 0.0, 1.0  # NLI-only
+    alpha, beta, gamma = 1.0, 0.0, 1.0  # NLI-only
 
     # Default label threshold for reporting (we'll sweep over a range too).
     label_threshold = 0.5
 
     # Load train/validation splits.
-    train_set, val_set = load_truthfulqa_train_val(
-        train_split="validation[:400]",
-        val_split="validation[400:500]",
-    )
+    if args.dataset == "web_questions":
+        train_set, val_set = load_webquestions_train_val(
+            train_split=args.train_split,
+            val_split=args.val_split,
+        )
+    elif args.dataset == "squad":
+        train_set, val_set = load_squad_v1_train_val(
+            train_split=args.train_split,
+            val_split=args.val_split,
+        )
+    elif args.dataset == "simplequestions_wikidata":
+        train_set, val_set = load_simplequestions_wikidata_train_val(
+            train_split=args.train_split,
+            val_split=args.val_split,
+            answerable_only=args.answerable_only,
+            resolve_labels=not args.no_resolve_wikidata_labels,
+        )
+    else:
+        train_set, val_set = load_truthfulqa_train_val(
+            train_split=args.train_split,
+            val_split=args.val_split,
+        )
+
+    hallucination_detector.console.print(f"[bold green]Loaded dataset:[/bold green] {args.dataset}")
 
     cache_path = Path(__file__).resolve().parent / "cached_features.json"
 
@@ -48,6 +109,8 @@ if __name__ == "__main__":
     # Results table (filled only for validation examples).
     results_table = create_results_table()
 
+    hallucination_detector.console.print(preview_examples(train_set, k=3))
+
     def collect_scores(dataset, limit_table=False, desc="Processing", return_meta=False):
         # Compute KL + similarity metrics for a dataset split.
         kl_scores = []
@@ -59,10 +122,17 @@ if __name__ == "__main__":
         nli_scores = []
         meta = []
 
+
         for idx, item in enumerate(tqdm(dataset, desc=desc), start=1):
             # Prompt formatting.
             question = item["question"]
-            wrapped_prompt = f'question: {question} answer:'
+            context = item.get("context", "")
+            if context:
+                wrapped_prompt = (
+                    f"context: {context}\nquestion: {question}\nshort answer (one or two words):"
+                )
+            else:
+                wrapped_prompt = f"question: {question} short answer (one or two words):"
 
             # KL-based hallucination score + generated answer.
             kl_stats, model_answer = hallucination_detector.calculate_hallucination_score(prompt=wrapped_prompt)
@@ -70,10 +140,14 @@ if __name__ == "__main__":
             # Reference answer.
             expected = item.get("best_answer", "")
 
+            # Normalize answers
+            norm_expected = normalize_answer(expected)
+            norm_model_answer = normalize_answer(model_answer)
+
             # Similarity metrics (higher = more similar).
-            cos_sim = similarity_detector.cosine_similarity(model_answer, expected)
-            tfidf_sim = similarity_detector.tfidf_cosine_similarity(model_answer, expected)
-            nli_score = similarity_detector.nli_entailment_score(expected, model_answer)
+            cos_sim = similarity_detector.cosine_similarity(norm_model_answer, norm_expected)
+            tfidf_sim = similarity_detector.tfidf_cosine_similarity(norm_model_answer, norm_expected)
+            nli_score = similarity_detector.nli_entailment_score(norm_expected, norm_model_answer)
 
             kl_scores.append(kl_stats["mean"])
             kl_max_scores.append(kl_stats["max"])
@@ -87,8 +161,8 @@ if __name__ == "__main__":
                 meta.append(
                     {
                         "question": question,
-                        "model_answer": model_answer,
-                        "expected": expected,
+                        "model_answer": norm_model_answer,
+                        "expected": norm_expected,
                         "nli": nli_score,
                     }
                 )
@@ -96,8 +170,8 @@ if __name__ == "__main__":
             if limit_table:
                 # Shorten long strings to keep the table readable.
                 short_q = question if len(question) <= 80 else question[:77] + "..."
-                short_model = model_answer if len(model_answer) <= 80 else model_answer[:77] + "..."
-                short_expected = expected if len(expected) <= 80 else expected[:77] + "..."
+                short_model = norm_model_answer if len(norm_model_answer) <= 80 else norm_model_answer[:77] + "..."
+                short_expected = norm_expected if len(norm_expected) <= 80 else norm_expected[:77] + "..."
                 results_table.add_row(
                     str(idx),
                     f"{kl_stats['mean']:.4f}",
@@ -112,6 +186,11 @@ if __name__ == "__main__":
         return kl_scores, kl_max_scores, kl_p90_scores, kl_std_scores, cos_scores, tfidf_scores, nli_scores, meta
 
     cache_config = {
+        "dataset": args.dataset,
+        "train_split": args.train_split,
+        "val_split": args.val_split,
+        "answerable_only": args.answerable_only,
+        "resolve_wikidata_labels": not args.no_resolve_wikidata_labels,
         "model": hallucination_detector.args.model_name,
         "max_new_tokens": hallucination_detector.args.max_new_tokens,
         "min_new_tokens": hallucination_detector.args.min_new_tokens,
@@ -314,6 +393,7 @@ if __name__ == "__main__":
 
     # Print summary metrics.
     summary_rows = [
+        ("Dataset", args.dataset),
         ("Train size", str(len(train_set))),
         ("Val size", str(len(val_set))),
         ("Best label threshold (NLI)", f"{best_thr:.2f}"),

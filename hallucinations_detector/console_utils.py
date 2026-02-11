@@ -4,6 +4,41 @@ from rich import box
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
+import random
+
+
+# Quick preview of random examples before heavy processing.
+def preview_examples(dataset, k=3):
+    total = len(dataset)
+    if total == 0:
+        return
+    k = min(k, total)
+    indices = random.sample(range(total), k)
+    preview_table = create_results_table()
+    preview_table.title = "Dataset Preview (Random Samples)"
+    for idx in indices:
+        item = dataset[idx]
+        question = item.get("question", "")
+        expected = item.get("best_answer", "")
+        context = item.get("context", "")
+        model_answer = "(not generated)"
+        kl = "-"
+        cos = "-"
+        tfidf = "-"
+        nli = "-"
+        if context:
+            question = f"{question} [context: {context[:60]}...]"
+        preview_table.add_row(
+            str(idx),
+            str(kl),
+            str(cos),
+            str(tfidf),
+            str(nli),
+            question if len(question) <= 80 else question[:77] + "...",
+            model_answer,
+            expected if len(expected) <= 80 else expected[:77] + "...",
+        )
+    return preview_table
 
 
 def setup_console_logger(name: str = "hallucinations_detector"):

@@ -38,7 +38,7 @@ class HallucinationDetector:
         parser.add_argument("--model_name", type=str, default="gpt2")
         parser.add_argument("--device", type=str, default=None)
         parser.add_argument("--max_new_tokens", type=int, default=30)
-        parser.add_argument("--min_new_tokens", type=int, default=5)
+        parser.add_argument("--min_new_tokens", type=int, default=1)
         parser.add_argument("--temperature", type=float, default=0.8)
         parser.add_argument("--top_p", type=float, default=0.9)
         parser.add_argument("--do_sample", action="store_true")

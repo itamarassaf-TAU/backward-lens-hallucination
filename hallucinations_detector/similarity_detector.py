@@ -38,8 +38,16 @@ class SimilarityDetector:
         except ImportError as exc:
             raise SystemExit("Missing dependency: scikit-learn. Install with 'pip install scikit-learn'.") from exc
 
+        text_a = (text_a or "").strip()
+        text_b = (text_b or "").strip()
+        if not text_a or not text_b:
+            return 0.0
+
         vectorizer = TfidfVectorizer(stop_words="english")
-        tfidf = vectorizer.fit_transform([text_a, text_b])
+        try:
+            tfidf = vectorizer.fit_transform([text_a, text_b])
+        except ValueError:
+            return 0.0
         score = (tfidf[0] @ tfidf[1].T).A[0][0]
         return float(score)
 
