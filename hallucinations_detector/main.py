@@ -13,11 +13,30 @@ from dataset_loader import (
 from console_utils import create_results_table, create_examples_table, render_corr_table, render_summary_table
 from detector import HallucinationDetector  # KL-based scoring
 from similarity_detector import SimilarityDetector  # similarity metrics + combined score
-from threshold_optimizer import ThresholdOptimizer  # threshold tuning
 from nn_classifier import train_mlp_classifier
 import torch
 import string
 import re
+
+def calculate_metrics(preds, labels):
+    tp = sum(1 for p, y in zip(preds, labels) if p == 1 and y == 1)
+    fp = sum(1 for p, y in zip(preds, labels) if p == 1 and y == 0)
+    fn = sum(1 for p, y in zip(preds, labels) if p == 0 and y == 1)
+    tn = sum(1 for p, y in zip(preds, labels) if p == 0 and y == 0)
+
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+    accuracy = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) else 0.0
+    
+    # Balanced Accuracy & MCC (optional, but good to have)
+    tpr = recall
+    tnr = tn / (tn + fp) if (tn + fp) else 0.0
+    balanced_accuracy = (tpr + tnr) / 2
+    denom = ((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)) ** 0.5
+    mcc = ((tp * tn) - (fp * fn)) / denom if denom else 0.0
+
+    return f1, precision, recall, accuracy, balanced_accuracy, mcc
 
 def normalize_answer(s):
     def remove_articles(text):
@@ -57,7 +76,6 @@ if __name__ == "__main__":
     # Initialize core components.
     hallucination_detector = HallucinationDetector()
     similarity_detector = SimilarityDetector()
-    threshold_optimizer = ThresholdOptimizer(num_thresholds=101)
 
     # Weights for combined similarity (cosine, tf-idf, NLI).
     alpha, beta, gamma = 1.0, 0.0, 1.0  # NLI-only
@@ -291,11 +309,19 @@ if __name__ == "__main__":
     )
 
     # Train a small MLP classifier to predict NLI hard labels from BL features.
-    x_train = torch.tensor(
+    x_train_raw = torch.tensor(
         list(zip(train_kl, train_kl_max, train_kl_p90, train_kl_std)), dtype=torch.float32
     )
     y_train = torch.tensor([1 if s >= label_threshold else 0 for s in train_nli], dtype=torch.float32)
 
+    # --- SCALING LOGIC START ---
+    # Compute mean and std from training data only (to avoid data leakage)
+    mean = x_train_raw.mean(dim=0)
+    std = x_train_raw.std(dim=0) + 1e-6  # Add small epsilon to prevent division by zero
+
+    # Normalize Training Data
+    x_train = (x_train_raw - mean) / std
+    # --- SCALING LOGIC END ---
 
     # Correlation report: KL vs similarity metrics (train split).
     try:
@@ -351,9 +377,14 @@ if __name__ == "__main__":
     val_sim = similarity_detector.combined_similarity(
         val_cos, val_tfidf, val_nli, weights=(alpha, beta, gamma)
     )
-    x_val = torch.tensor(
+    
+    x_val_raw = torch.tensor(
         list(zip(val_kl, val_kl_max, val_kl_p90, val_kl_std)), dtype=torch.float32
     )
+    
+    # Normalize Validation Data using TRAINING stats
+    x_val = (x_val_raw - mean) / std
+    
     y_val = torch.tensor([1 if s >= label_threshold else 0 for s in val_nli], dtype=torch.float32)
 
     nn_result = train_mlp_classifier(x_train, y_train, x_val, y_val)
@@ -380,7 +411,7 @@ if __name__ == "__main__":
     for thr in sweep:
         val_labels = [1 if s >= thr else 0 for s in val_nli]
         nn_val_preds = [1 if p >= thr else 0 for p in nn_val_probs]
-        metrics = threshold_optimizer._binary_metrics(nn_val_preds, val_labels)
+        metrics = calculate_metrics(nn_val_preds, val_labels)
         if metrics[0] > best_f1:
             best_f1 = metrics[0]
             best_thr = thr

@@ -185,7 +185,14 @@ class HallucinationDetector:
             partial_text = tokenizer.decode(
                 generated_ids[0, prompt_len:], skip_special_tokens=True
             )
-            if step + 1 >= args.min_new_tokens and partial_text and ("." in partial_text or "\n" in partial_text):
+
+            # 1. Stop if we see ANY punctuation that ends a phrase
+            if any(char in partial_text for char in [".", "\n", ",", ";", "!", "?"]):
+                break
+
+            # 2. Stop immediately if we have generated more than 3 words
+            # (Allows for "The United States" but kills "The United States is...")
+            if len(partial_text.strip().split()) >= 3:
                 break
 
         if not kl_scores:
