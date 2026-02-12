@@ -1,5 +1,5 @@
 .venv
 BackwardLens/
 hallucinations_detector/__pycache__/
-hallucinations_detector/mlp_training_curve.png
-hallucinations_detector/cached_features*
+*.json
+*.png
