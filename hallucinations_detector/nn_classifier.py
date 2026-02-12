@@ -21,7 +21,7 @@ def train_mlp_classifier(
     y_train: torch.Tensor,
     x_val: torch.Tensor,
     y_val: torch.Tensor,
-    epochs: int = 200,
+    epochs: int = 1000,
     lr: float = 1e-3,
 ) -> dict:
     """Train MLP classifier with BCE loss on hard labels."""
