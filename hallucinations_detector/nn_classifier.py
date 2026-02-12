@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-
 class HallucinationMLP(nn.Module):
     """Small MLP that maps BL features -> similarity score."""
 
@@ -26,6 +25,10 @@ def train_mlp_classifier(
     lr: float = 1e-3,
 ) -> dict:
     """Train MLP classifier with BCE loss on hard labels."""
+    
+    # REPRODUCIBILITY: Fix the random seed so results are stable
+    torch.manual_seed(42)
+    
     model = HallucinationMLP(input_dim=x_train.shape[1])
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.BCEWithLogitsLoss()
@@ -40,8 +43,8 @@ def train_mlp_classifier(
         optimizer.step()
         train_losses.append(loss.item())
 
-        if epoch == 0 or (epoch + 1) % 10 == 0 or (epoch + 1) == epochs:
-            print(f"[MLP] Epoch {epoch + 1}/{epochs} - train BCE: {loss.item():.4f}")
+    # We don't need to print every epoch for such a small model
+    print(f"[MLP] Final Train BCE: {train_losses[-1]:.4f}")
 
     model.eval()
     with torch.no_grad():
