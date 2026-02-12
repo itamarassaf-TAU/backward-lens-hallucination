@@ -91,7 +91,7 @@ if __name__ == "__main__":
     # Save Plot
     plt.figure(figsize=(6, 4))
     plt.plot(nn_result["train_losses"], label="Train BCE")
-    plt.title("Classifier Training Curve"); plt.legend(); plt.tight_layout(); plt.savefig("training_curve.png"); plt.close()
+    plt.title("Classifier Training Curve"); plt.legend(); plt.tight_layout(); plt.savefig("/outputs/training_curve.png"); plt.close()
 
     # 6. Evaluation (Threshold Sweep)
     probs = nn_result["val_probs"].tolist()
@@ -157,8 +157,8 @@ if __name__ == "__main__":
         probs=probs, 
         labels=val_labels, 
         threshold=best_thr,
-        filename="final_histogram.png"
+        filename="/outputs/final_histogram.png"
     )
 
-    plot_roc_curve(probs, val_labels, filename="final_roc_curve.png")
-    plot_pr_curve(probs, val_labels, filename="final_pr_curve.png")
+    plot_roc_curve(probs, val_labels, filename="/outputs/final_roc_curve.png")
+    plot_pr_curve(probs, val_labels, filename="/outputs/final_pr_curve.png")
