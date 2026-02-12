@@ -2,6 +2,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
 
+def plot_training_curves(train_losses, val_losses, filename="./outputs/training_curve.png"):
+    plt.figure(figsize=(8, 5))
+    plt.plot(train_losses, label='Train BCE')
+    plt.plot(val_losses, label='Val BCE', linestyle='--') # The new line
+    plt.title("Classifier Training vs Validation Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("BCE Loss")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.savefig(filename)
+    plt.close()
+
 def plot_roc_curve(probs, labels, filename="roc_curve.png"):
     """
     Plots the Receiver Operating Characteristic (ROC) curve.

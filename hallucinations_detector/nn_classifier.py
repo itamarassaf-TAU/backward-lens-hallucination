@@ -21,7 +21,7 @@ def train_mlp_classifier(
     y_train: torch.Tensor,
     x_val: torch.Tensor,
     y_val: torch.Tensor,
-    epochs: int = 1000,
+    epochs: int = 500,
     lr: float = 1e-3,
 ) -> dict:
     """Train MLP classifier with BCE loss on hard labels."""
@@ -35,6 +35,7 @@ def train_mlp_classifier(
 
     model.train()
     train_losses = []
+    val_losses = []  # Initialize val_losses list to store validation losses
     for epoch in range(epochs):
         optimizer.zero_grad()
         logits = model(x_train)
@@ -42,6 +43,12 @@ def train_mlp_classifier(
         loss.backward()
         optimizer.step()
         train_losses.append(loss.item())
+        model.eval()
+        with torch.no_grad():
+            v_logits = model(x_val)
+            v_loss = loss_fn(v_logits, y_val)
+            val_losses.append(v_loss.item()) # Initialize val_losses = [] before loop
+        model.train()
 
     # We don't need to print every epoch for such a small model
     print(f"[MLP] Final Train BCE: {train_losses[-1]:.4f}")
@@ -56,7 +63,8 @@ def train_mlp_classifier(
 
     return {
         "model": model,
-        "val_bce": val_loss,
         "val_probs": val_probs.detach().cpu(),
         "train_losses": train_losses,
+        "val_losses": val_losses,
+        "val_bce": val_loss,  # <--- Make sure this line is here!
     }

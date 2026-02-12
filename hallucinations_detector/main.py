@@ -12,7 +12,7 @@ from utils import load_cache, save_cache
 from metrics import calculate_metrics
 from runner import collect_scores
 from runner import collect_scores
-from visualizer import plot_probability_histogram, plot_roc_curve, plot_pr_curve
+from visualizer import plot_training_curves, plot_probability_histogram, plot_roc_curve, plot_pr_curve
 
 
 def parse_args():
@@ -86,12 +86,10 @@ if __name__ == "__main__":
     x_train, x_val = (x_train_raw - mean) / std, (x_val_raw - mean) / std
 
     # 5. Train Classifier
-    nn_result = train_mlp_classifier(x_train, y_train, x_val, y_val)
+    nn_result = train_mlp_classifier(x_train, y_train, x_val, y_val, epochs=500, lr=1e-3)
     
     # Save Plot
-    plt.figure(figsize=(6, 4))
-    plt.plot(nn_result["train_losses"], label="Train BCE")
-    plt.title("Classifier Training Curve"); plt.legend(); plt.tight_layout(); plt.savefig("./outputs/training_curve.png"); plt.close()
+    plot_training_curves(nn_result["train_losses"], nn_result["val_losses"])
 
     # 6. Evaluation (Threshold Sweep)
     probs = nn_result["val_probs"].tolist()
