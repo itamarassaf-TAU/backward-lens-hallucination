@@ -9,6 +9,7 @@ from dataset_loader import (
     load_simplequestions_wikidata_train_val,
     load_squad_v1_train_val,
     load_webquestions_train_val,
+    load_custom_facts_train_val
 )  # dataset splits
 from console_utils import create_results_table, create_examples_table, render_corr_table, render_summary_table
 from detector import HallucinationDetector  # KL-based scoring
@@ -59,8 +60,8 @@ def parse_args():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="squad",
-        choices=["truthfulqa", "simplequestions_wikidata", "squad", "web_questions"],
+        default="facts",
+        choices=["truthfulqa", "simplequestions_wikidata", "squad", "web_questions", "facts"],
     )
     parser.add_argument("--train_split", type=str, default="train[:400]")
     parser.add_argument("--val_split", type=str, default="validation[:100]")
@@ -101,6 +102,9 @@ if __name__ == "__main__":
             answerable_only=args.answerable_only,
             resolve_labels=not args.no_resolve_wikidata_labels,
         )
+    elif args.dataset == "facts":
+        # Load your custom CSV
+        train_set, val_set = load_custom_facts_train_val("facts.csv")
     else:
         train_set, val_set = load_truthfulqa_train_val(
             train_split=args.train_split,
@@ -137,68 +141,81 @@ if __name__ == "__main__":
         kl_std_scores = []
         cos_scores = []
         tfidf_scores = []
-        nli_scores = []
+        nli_scores = [] # We will reuse this list name so the rest of the code doesn't break
         meta = []
 
-
         for idx, item in enumerate(tqdm(dataset, desc=desc), start=1):
-            # Prompt formatting.
-            question = item["question"]
-            context = item.get("context", "")
-            if context:
-                wrapped_prompt = (
-                    f"context: {context}\nquestion: {question}\nshort answer (one or two words):"
-                )
+            
+            # 1. Dataset-Specific Prompting
+            if args.dataset == "lambada":
+                raw_prompt = item["question"]
+                words = raw_prompt.split()
+                if len(words) > 15: # Fast truncation
+                    raw_prompt = " ".join(words[-15:])
+                wrapped_prompt = raw_prompt
+            elif args.dataset == "facts":
+                # Facts dataset is already short, just use it directly
+                wrapped_prompt = item["question"]
             else:
-                wrapped_prompt = f"question: {question} short answer (one or two words):"
+                # Fallback for other datasets
+                wrapped_prompt = item["question"]
 
-            # KL-based hallucination score + generated answer.
+            # 2. Run Model (Get Entropy/KL)
             kl_stats, model_answer = hallucination_detector.calculate_hallucination_score(prompt=wrapped_prompt)
 
-            # Reference answer.
+            # 3. Get Expected Answer
             expected = item.get("best_answer", "")
 
-            # Normalize answers
+            # 4. Normalize (Lowercase, remove punctuation/articles)
+            # This handles "The Paris" == "paris"
             norm_expected = normalize_answer(expected)
             norm_model_answer = normalize_answer(model_answer)
 
-            # Similarity metrics (higher = more similar).
-            cos_sim = similarity_detector.cosine_similarity(norm_model_answer, norm_expected)
-            tfidf_sim = similarity_detector.tfidf_cosine_similarity(norm_model_answer, norm_expected)
-            nli_score = similarity_detector.nli_entailment_score(norm_expected, norm_model_answer)
+            # 5. STRICT CLASSIFICATION (The Change)
+            # If they match exactly -> 1.0 (True)
+            # If they differ even slightly -> 0.0 (Hallucination)
+            if norm_model_answer == norm_expected:
+                binary_score = 1.0
+            else:
+                binary_score = 0.0
 
+            # We verify with simple containment for edge cases (optional)
+            # e.g. target="Washington", model="George Washington" -> Acceptable?
+            # For now, let's stick to strict equality as you asked.
+            
+            # 6. Store Scores
             kl_scores.append(kl_stats["mean"])
             kl_max_scores.append(kl_stats["max"])
             kl_p90_scores.append(kl_stats["p90"])
             kl_std_scores.append(kl_stats["std"])
+            
+            # We treat 'nli_score' as our Ground Truth label now (0 or 1)
+            nli_scores.append(binary_score) 
+            
+            # Calculate these just for graphs, but they won't determine the label
+            cos_sim = similarity_detector.cosine_similarity(norm_model_answer, norm_expected)
             cos_scores.append(cos_sim)
-            tfidf_scores.append(tfidf_sim)
-            nli_scores.append(nli_score)
+            tfidf_scores.append(0.0) # Skip TFIDF to speed it up
 
             if return_meta:
-                meta.append(
-                    {
-                        "question": question,
-                        "model_answer": norm_model_answer,
-                        "expected": norm_expected,
-                        "nli": nli_score,
-                    }
-                )
+                meta.append({
+                    "question": wrapped_prompt,
+                    "model_answer": norm_model_answer,
+                    "expected": norm_expected,
+                    "nli": binary_score, 
+                })
 
             if limit_table:
-                # Shorten long strings to keep the table readable.
-                short_q = question if len(question) <= 80 else question[:77] + "..."
-                short_model = norm_model_answer if len(norm_model_answer) <= 80 else norm_model_answer[:77] + "..."
-                short_expected = norm_expected if len(norm_expected) <= 80 else norm_expected[:77] + "..."
+                short_q = wrapped_prompt if len(wrapped_prompt) <= 60 else "..." + wrapped_prompt[-57:]
                 results_table.add_row(
                     str(idx),
                     f"{kl_stats['mean']:.4f}",
-                    f"{cos_sim:.4f}",
-                    f"{tfidf_sim:.4f}",
-                    f"{nli_score:.4f}",
+                    f"{binary_score:.0f}", # Display as 0 or 1
+                    "-",
+                    "-",
                     short_q,
-                    short_model,
-                    short_expected,
+                    norm_model_answer,
+                    norm_expected,
                 )
 
         return kl_scores, kl_max_scores, kl_p90_scores, kl_std_scores, cos_scores, tfidf_scores, nli_scores, meta

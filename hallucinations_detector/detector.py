@@ -35,7 +35,7 @@ class HallucinationDetector:
 
     def parse_args(self):
         parser = argparse.ArgumentParser()
-        parser.add_argument("--model_name", type=str, default="gpt2")
+        parser.add_argument("--model_name", type=str, default="gpt2-large")
         parser.add_argument("--device", type=str, default=None)
         parser.add_argument("--max_new_tokens", type=int, default=30)
         parser.add_argument("--min_new_tokens", type=int, default=1)
@@ -190,9 +190,9 @@ class HallucinationDetector:
             if any(char in partial_text for char in [".", "\n", ",", ";", "!", "?"]):
                 break
 
-            # 2. Stop immediately if we have generated more than 3 words
+            # 2. Stop immediately if we have generated more than 10 words
             # (Allows for "The United States" but kills "The United States is...")
-            if len(partial_text.strip().split()) >= 3:
+            if len(partial_text.strip().split()) >= 10:
                 break
 
         if not kl_scores:

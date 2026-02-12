@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+import pandas as pd
+
 
 from datasets import load_dataset
 
@@ -180,3 +182,26 @@ def load_simplequestions_wikidata_train_val(
         val = val.map(_normalize_qa_record)
 
     return train, val
+
+
+def load_custom_facts_train_val(path="facts.csv"):
+    # Load the CSV
+    df = pd.read_csv(path)
+    
+    # Create a simple list of dicts
+    data = []
+    for _, row in df.iterrows():
+        data.append({
+            "question": row["question"],     # The prompt (e.g., "The capital of France is")
+            "best_answer": row["best_answer"], # The target (e.g., "Paris")
+            "context": ""
+        })
+        
+    # Convert to Hugging Face Dataset format
+    from datasets import Dataset
+    dataset = Dataset.from_list(data)
+    
+    # Split into Train (80%) and Val (20%)
+    dataset = dataset.train_test_split(test_size=0.2, seed=42)
+    
+    return dataset["train"], dataset["test"]
