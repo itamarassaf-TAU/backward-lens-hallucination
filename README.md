@@ -1,4 +1,3 @@
-Here is the corrected, "un-broken" README.md:
 
 Markdown
 # Detecting Hallucinations via Internal State Conflict
