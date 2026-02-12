@@ -49,11 +49,12 @@ def collect_scores(dataset, detector, limit_table=False, desc="Processing", retu
         # Add to table if it exists
         if results_table is not None:
             short_q = wrapped_prompt if len(wrapped_prompt) <= 60 else "..." + wrapped_prompt[-57:]
+            
+            # UPDATED: Only adds the columns that exist in the new table
             results_table.add_row(
                 str(idx),
                 f"{kl_stats['mean']:.4f}",
                 f"{binary_score:.0f}",
-                "-", "-", 
                 short_q,
                 norm_model_answer,
                 norm_expected,

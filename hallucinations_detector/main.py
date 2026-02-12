@@ -144,9 +144,15 @@ if __name__ == "__main__":
     for tag in ["TP", "TN", "FP", "FN"]:
         for idx in buckets[tag][:3]:
             m = val_meta[idx]
-            ex_table.add_row(tag, str(true_labels[idx]), str(pred_labels[idx]), 
-                             f"{m['label']:.0f}", f"{probs[idx]:.4f}", 
-                             shorten(m["question"]), shorten(m["model_answer"]), shorten(m["expected"]))
+            ex_table.add_row(
+                tag, 
+                str(true_labels[idx]), 
+                str(pred_labels[idx]), 
+                f"{probs[idx]:.4f}", 
+                shorten(m["question"]), 
+                shorten(m["model_answer"]), 
+                shorten(m["expected"])
+            )
             
     detector.console.print(ex_table)
 
