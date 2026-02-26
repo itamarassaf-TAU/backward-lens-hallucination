@@ -1,40 +1,54 @@
-
-Markdown
 # Detecting Hallucinations via Internal State Conflict
 
-This repository implements a hallucination detector for GPT-2 using Logit Lens KL-divergence features.
+This repository implements a hallucination detector for GPT-2 using Backward Lens KL-divergence features.
 
-## ⚠️ Critical Setup Requirement
-For the imports to work, you MUST maintain the following directory structure. The detector repo and the original BackwardLens repo must sit side-by-side in the same parent folder:
+## Requirements
+
+- Python `>=3.10,<3.13` (Python 3.13 is not supported by this dependency stack yet)
+- `pip`
+- `venv`
+
+## Required Directory Layout
+
+`BackwardLens` must be a sibling directory of this repository:
 
 ```text
 NLP/
-├── BackwardLens/                 # Clone original repo here
-└── backward-lens-hallucination/  # This repo
-    ├── main.py
+├── BackwardLens/
+└── backward-lens-hallucination/
     ├── requirements.txt
-    └── hallucinations_detector/   # Core logic folder
-Installation
-Clone both repositories into a single parent folder:
+    └── hallucinations_detector/
+```
 
-Bash
-git clone [https://github.com/itamarassaf-TAU/backward-lens-hallucination.git](https://github.com/itamarassaf-TAU/backward-lens-hallucination.git)
-git clone [https://github.com/KritzR/BackwardLens.git](https://github.com/KritzR/BackwardLens.git)
-Install dependencies:
+## Installation
 
-Bash
+```bash
+git clone https://github.com/KritzR/BackwardLens.git
+git clone https://github.com/itamarassaf-TAU/backward-lens-hallucination.git
 cd backward-lens-hallucination
-pip install -r requirements.txt
-Running the Code
-Generate Features: Run the main script from the backward-lens-hallucination root:
 
-Bash
-python main.py
-Train & Evaluate: Run the classifier script:
+# Use Python 3.10/3.11/3.12
+python3.10 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
 
-Bash
-python hallucinations_detector/nn_classifier.py
-Authors
-Itamar Assaf
+## Run
 
-Nadav Orenstein
+From repository root:
+
+```bash
+source .venv/bin/activate
+python hallucinations_detector/main.py --dataset facts
+```
+
+## Notes
+
+- `hallucinations_detector/nn_classifier.py` is a module used by `main.py`, not a standalone entrypoint.
+- The first run downloads the model from Hugging Face unless already cached.
+
+## Authors
+
+- Itamar Assaf
+- Nadav Orenstein

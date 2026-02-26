@@ -34,9 +34,11 @@ if __name__ == "__main__":
 
     # 3. Cache Logic
     cache_config = {
+        "cache_schema": 2,
         "dataset": args.dataset,
         "model": detector.args.model_name,
-        "max_new_tokens": detector.args.max_new_tokens
+        "max_new_tokens": detector.args.max_new_tokens,
+        "splitter": "datasets.train_test_split(test_size=0.2, seed=42)",
     }
     
     cache = load_cache(cache_path, cache_config)
