@@ -1,8 +1,13 @@
+from os import mkdir
+from os.path import exists
+
+import os
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
 
 def plot_training_curves(train_losses, val_losses, filename="./outputs/training_curve.png"):
+    os.makedirs("outputs", exist_ok = True)
     plt.figure(figsize=(8, 5))
     plt.plot(train_losses, label='Train BCE')
     plt.plot(val_losses, label='Val BCE', linestyle='--') # The new line
