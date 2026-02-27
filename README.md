@@ -23,15 +23,14 @@ NLP/
 ## Installation
 
 ```bash
-git clone https://github.com/KritzR/BackwardLens.git
+git clone https://github.com/shacharKZ/BackwardLens
 git clone https://github.com/itamarassaf-TAU/backward-lens-hallucination.git
-cd backward-lens-hallucination
 
 # Use Python 3.10/3.11/3.12
-python3.10 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install -r backward-lens-hallucination/requirements.txt
 ```
 
 ## Run
@@ -39,8 +38,7 @@ python -m pip install -r requirements.txt
 From repository root:
 
 ```bash
-source .venv/bin/activate
-python hallucinations_detector/main.py --dataset facts
+PYTHONPATH=BackwardLens python backward-lens-hallucination/hallucinations_detector/main.py --dataset facts
 ```
 
 ## Notes
